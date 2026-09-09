@@ -4,6 +4,9 @@ node_modules/
 # Build
 dist/
 
+# Runtime data
+data/
+
 # Environment
 .env
 .env.*

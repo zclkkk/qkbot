@@ -1,48 +1,45 @@
 import process from 'node:process';
-import { createColoredLogHandler } from '@fraqjs/color-log';
-import type { LogLevel } from '@fraqjs/kernel';
-import type { RouteActivation, RouteActivationResolver } from '@fraqjs/fraq';
+import type { LogLevel } from '@fraqjs/fraq';
 
 export interface BotConfig {
-  milkyUrl: string;
-  logLevel: LogLevel;
-  prefixes: string[];
-  logHandler: ReturnType<typeof createColoredLogHandler>;
-  activationResolver: RouteActivationResolver;
+  readonly milkyUrl: string;
+  readonly milkyAccessToken: string | undefined;
+  readonly logLevel: LogLevel;
+  readonly prefixes: readonly string[];
 }
 
-const rawMilkyUrl = process.env.MILKY_URL?.trim() || 'http://127.0.0.1:3010/';
-const milkyUrl = rawMilkyUrl.endsWith('/') ? rawMilkyUrl : `${rawMilkyUrl}/`;
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
+  let milkyUrl: URL;
+  try {
+    milkyUrl = new URL(env.MILKY_URL?.trim() ?? 'http://127.0.0.1:3010/');
+  } catch {
+    throw new Error('MILKY_URL 必须是有效的 HTTP(S) 地址。');
+  }
 
-const validLogLevels: LogLevel[] = ['debug', 'info', 'warn', 'error'];
-const rawLogLevel = process.env.LOG_LEVEL?.trim().toLowerCase() as LogLevel;
-const logLevel: LogLevel = validLogLevels.includes(rawLogLevel) ? rawLogLevel : 'info';
+  if (milkyUrl.protocol !== 'http:' && milkyUrl.protocol !== 'https:') {
+    throw new Error('MILKY_URL 仅支持 http:// 或 https://。');
+  }
+  if (milkyUrl.username || milkyUrl.password || milkyUrl.href.includes('?') || milkyUrl.href.includes('#')) {
+    throw new Error('MILKY_URL 不能包含账号、密码、查询参数或片段；鉴权请使用 MILKY_ACCESS_TOKEN。');
+  }
+  milkyUrl.pathname = `${milkyUrl.pathname.replace(/\/+$/, '')}/`;
 
-const rawPrefixes = process.env.COMMAND_PREFIXES?.trim();
-const prefixes: string[] = rawPrefixes
-  ? rawPrefixes.split(',').map((p: string) => p.trim()).filter(Boolean)
-  : ['/', '#'];
+  const levels: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
+  const rawLogLevel = (env.LOG_LEVEL ?? 'info').trim().toLowerCase();
+  const logLevel = levels.find((level) => level === rawLogLevel);
+  if (!logLevel) {
+    throw new Error('LOG_LEVEL 必须是 debug、info、warn 或 error。');
+  }
 
-/**
- * 路由触发解析器：
- * 允许用户通过以下任意方式触发指令：
- * 1. 前缀触发（例如 /ping 或 #ping）
- * 2. @机器人 触发（例如 @绒布球 ping）
- * 3. 直接输入指令（例如 ping）
- */
-const activationResolver: RouteActivationResolver = (_route, _session) => {
-  const activations: RouteActivation[] = [
-    { type: 'direct' },
-    { type: 'mention' },
-    ...prefixes.map((prefix: string) => ({ type: 'prefix' as const, prefix })),
-  ];
-  return activations;
-};
+  const prefixes = (env.COMMAND_PREFIXES ?? '/,#').split(',').map((prefix) => prefix.trim());
+  if (prefixes.some((prefix) => !prefix || /\s/.test(prefix))) {
+    throw new Error('COMMAND_PREFIXES 必须是逗号分隔的非空前缀，前缀内部不能包含空白。');
+  }
 
-export const config: BotConfig = Object.freeze({
-  milkyUrl,
-  logLevel,
-  prefixes,
-  logHandler: createColoredLogHandler({ minLevel: logLevel }),
-  activationResolver,
-});
+  return Object.freeze({
+    milkyUrl: milkyUrl.toString(),
+    milkyAccessToken: env.MILKY_ACCESS_TOKEN?.trim() || undefined,
+    logLevel,
+    prefixes: Object.freeze([...new Set(prefixes)]),
+  });
+}

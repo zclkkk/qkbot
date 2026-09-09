@@ -1,62 +1,67 @@
 # qkbot
 
-基于 [Fraq](https://fraq.dev/) 框架与 [Milky](https://milky.ntqqrev.org/) 协议构建的现代 TypeScript QQ 机器人。
+基于 Fraq 原生插件的 TypeScript QQ 机器人应用。默认不安装任何插件，连接 Milky 协议端后保持运行，不回复业务消息。
 
-## 特性
+## 环境与运行
 
-- **强类型指令系统**：基于 `@fraqjs/fraq` 声明式参数路由，参数类型自动推断与拦截
-- **高内聚插件架构**：采用 `definePlugin` 模块化分层，业务高内聚低耦合
-- **多路由触发模式**：内置支持前缀（`/`、`#`）、`@机器人` 与直接指令触发
-- **优雅停机保护**：捕获系统信号自动执行 `ctx.stop()` 安全清理连接与状态
-- **轻量纯粹**：纯原生 TypeScript 项目，无厚重 WebUI，极简依赖
-- **热重载开发**：使用 `tsx watch` 实现毫秒级修改热更新
-
-## 架构设计
-
-```text
-src/
-├── config.ts              # 集中配置管理与校验（类型安全、环境检查）
-├── lifecycle.ts           # 进程生命周期与优雅停机 (SIGINT/SIGTERM -> ctx.stop())
-├── plugins/               # 业务功能模块（可复用插件）
-│   └── system/            # 系统基础功能 (ping, status)
-│       ├── index.ts
-│       ├── ping.ts
-│       └── status.ts
-└── index.ts               # 装配根入口（Composition Root）
-```
-
-## 快速开始
-
-### 准备环境
-
-- Node.js >= 22 (推荐 LTS)
-- 已运行的 Milky 协议端（如 Yogurt）
-
-### 安装依赖
+需要 Node.js >= 24，以及已运行的 Milky 协议端。
 
 ```bash
-npm install
-```
-
-### 配置
-
-复制配置样例并按需修改：
-
-```bash
-cp .env.example .env
-```
-
-### 开发与运行
-
-```bash
-# 启动热重载开发模式（推荐开发时使用）
-npm run dev
-
-# 启动常规生产模式
+npm ci
+npm run typecheck
+npm run build
 npm start
 ```
 
-## 内置指令
+开发时运行 `npm run dev`，源码变化会触发进程重启。正式运行使用编译后的 `dist/index.js`，无需 tsx。
 
-- `ping` / `存活`：测试连通性，回复 `pong! 🏓`
-- `status` / `状态`：查看机器人运行时间、内存占用与 Milky 服务状态
+应用从进程环境读取配置，不自动加载 `.env`。`.env.example` 仅用于说明配置格式；需要从外部文件加载时，可使用 Node.js：
+
+```bash
+node --env-file=/path/to/qkbot.env dist/index.js
+```
+
+开发时也可以显式加载文件：
+
+```bash
+node --env-file=/path/to/qkbot.env --import tsx --watch src/index.ts
+```
+
+## 配置
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `MILKY_URL` | `http://127.0.0.1:3010/` | HTTP(S) 基础地址，支持路径前缀；不接受账号、密码、查询参数或片段 |
+| `MILKY_ACCESS_TOKEN` | 空 | Milky 访问令牌，同时用于 HTTP API 和 WebSocket |
+| `LOG_LEVEL` | `info` | `debug`、`info`、`warn`、`error`，忽略大小写 |
+| `COMMAND_PREFIXES` | `/,#` | 逗号分隔的非空前缀；重复值合并，前缀内部不能有空白 |
+
+配置在创建连接之前校验，非法配置会以非零状态退出。
+
+默认指令规则：群聊使用前缀或 @机器人，私聊额外允许直接指令。这些规则仅作用于插件注册的路由；插件自己的原始事件监听需自行判断处理条件。
+
+## 代码结构
+
+```text
+src/
+├── index.ts       # 创建 Context，接入日志并启动
+├── config.ts      # 读取与校验宿主配置
+├── routing.ts     # 群聊、私聊的指令触发规则
+├── lifecycle.ts   # 退出信号、启动失败清理与退出期限
+├── plugins.ts     # 显式装配插件，初始为空
+└── plugins/       # 按需添加插件
+docs/
+└── plugins.md     # 插件接入约定
+```
+
+插件直接使用 Fraq 的 `definePlugin`、`ctx.install` 和服务注入。增加功能时，在 `src/plugins/` 编写插件，然后在 `src/plugins.ts` 安装；修改装配后重启生效。详见 [插件开发](docs/plugins.md)。
+
+## 运行行为
+
+- `qkbot 初始化完成` 表示 Context 已启动；`websocket connected` 才表示事件连接成功，两者均不等同于 QQ 账号在线确认。
+- Milky 断连由 Fraq 自动重连。qkbot 不管理协议端或签名端进程。
+- 配置或插件初始化失败会以非零状态退出；已创建的 Context 会先执行清理。
+- 收到退出信号后调用 `ctx.stop()`，最多等待 10 秒。插件持有的长任务需要自行实现等待或取消。
+- 日志输出到标准输出和标准错误。实际配置、进程托管、日志保留、数据路径与备份由运行环境管理。
+
+`dist/`、`data/` 和实际 `.env` 文件不纳入版本控制。当前不引入测试框架，使用类型检查、构建和启动／重连／退出检查验证底座；后续按业务需要添加自动化测试。

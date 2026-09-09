@@ -1,21 +1,32 @@
+import process from 'node:process';
+import { createColoredLogHandler } from '@fraqjs/color-log';
 import { Context } from '@fraqjs/fraq';
-import { config } from './config.js';
+import { loadConfig } from './config.js';
 import { setupLifecycle } from './lifecycle.js';
-import { systemPlugin } from './plugins/system/index.js';
+import { installPlugins } from './plugins.js';
+import { createActivationResolver } from './routing.js';
 
-const ctx = Context.fromUrl(config.milkyUrl, {
-  logHandler: config.logHandler,
-  routing: {
-    activationResolver: config.activationResolver,
-  },
-});
+try {
+  const config = loadConfig();
+  const ctx = Context.fromUrl(config.milkyUrl, {
+    accessToken: config.milkyAccessToken,
+    routing: { activationResolver: createActivationResolver(config.prefixes) },
+  });
+  ctx.logBus.on('log', createColoredLogHandler({ minLevel: config.logLevel }));
+  const shutdown = setupLifecycle(ctx);
 
-// 挂载业务功能插件
-ctx.install(systemPlugin, { milkyUrl: config.milkyUrl });
-
-// 注册进程生命周期与优雅停机
-setupLifecycle(ctx);
-
-ctx.logger.info(`正在连接 Milky 协议端 (${config.milkyUrl})...`);
-await ctx.start();
-ctx.logger.info('qkbot 机器人已成功启动并开始监听事件！');
+  try {
+    installPlugins(ctx);
+    ctx.logger.info(`Milky 地址：${config.milkyUrl}`);
+    await ctx.start();
+    if (ctx.state === 'started' && process.exitCode === undefined) {
+      ctx.logger.info('qkbot 初始化完成，连接状态见事件源日志。');
+    }
+  } catch (error) {
+    ctx.logger.error('qkbot 启动失败。', error);
+    await shutdown(1);
+  }
+} catch (error) {
+  console.error('qkbot 启动失败：', error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+}
